@@ -114,3 +114,146 @@ new Vue({
     }
 });
 ```
+
+## Vue 生命周期
+Create 钩子函数可以访问到数据
+父 create > 子Create  
+父 beforeDestoryed > 子 beforeDestoryed
+Mount 钩子函数中是可以访问 DOM 的
+子 mount > 父 mount
+子 destoryed > 父 destoryed
+
+## 异步组件 （三种方式）
+* require 方式（工厂函数）
+    ```js
+    Vue.component('HelloWorld', function(resolve, reject) {
+        //这个特殊的 require 语法告诉 webpack 自动编译后的代码分割成不同的块
+        require(['./component/HelloWorld.vue'], function(res) {
+            resolve(res)
+        });
+    })
+    ```
+
+* import 方式(Promise) --> 配合 webpack
+    ```js
+    Vue.component('HelloWorld',
+    //该 'import' 函数会返回一个 'Promise' 对象
+    () => import('./component/HelloWorld.vue'));
+    ```
+
+* 高级异步组件
+    ```js
+    const LoadingComp = {
+        template: '<div>loading</div>'
+    }
+
+    const ErrorComp = {
+        template: '<div>error</div>'
+    }
+
+    const AsyncComp = () => ({
+        //需要加载的组件，应该是一个 Promise
+        component: import('./component/HelloWorld.vue'),
+
+        //加载中应当渲染的组件
+        loading: LoadingComp,
+
+        //出错时渲染的组件
+        error: ErrorComp,
+
+        //渲染加载中的组件前等待时间，默认: 200ms
+        delay: 200,
+
+        //最长等待时间，超出此时间则渲染错误组件，默认: Infinity
+        timeout: 1000
+    })
+
+    Vue.component('HelloWorld', AsyncComp)
+    ```
+* **异步组件实现的本质是2次及以上渲染（通常为 2 次），先渲染成注释节点，当组件加载成功后，再通过<font color="red">forceRender(forceUpdate)</font> 重新渲染**
+
+* **异步组件三种实现方式中，高级异步组件的设计非常巧妙的，它可以通过简单的配置实现了loading、resolve、reject、timeout 四种状态**
+
+
+## 响应式原理
+* 核心 &rarr; ES5 的 `Object.defineProperty` 为对象属性添加 getter 和 setter 方法
+* Vue 会把 props, data, compute 等等变成响应式的
+* 访问对象后，就会执行 `Object.defineProperty`里面的 get 方法， 修改它就会执行 set 方法
+
+## 依赖收集 即订阅数据变化的 watcher 的收集
+* **Dep 对象作用：建立数据和 Watcher之间的桥梁**
+* 当触发 get 函数，就会把当前的 Watcher 收集起来当作一个订阅者
+* 目的是为了当这些响应式数据发送变化，触发它们的 setter 的时候，能知道应该通知哪些订阅者去做响应的逻辑处理
+
+## 派发更新
+* 当数据发生变化后，通知所有订阅了这个数据变化的 Watcher 执行 update
+* 优化：派发更新过程中会把所有要执行 update 的 watcher 推到队列中，在 nextTick后执行 flush
+
+## JS 运行机制
+* 基于循环事件；单线程；
+* 事件循环
+    1. 所有同步任务在主线程执行，形成一个"执行栈"
+    2.  主线程之外，还存在一个"任务队列（task queue）"，当异步任务有结果后，就会在 "任务队列" 中放置一个事件
+    3.  一旦执行栈中的所有同步任务执行完毕，系统就会读取"任务队列",查询有哪些事件，将哪些结束的处于等待状态的异步任务，放入执行栈，开始执行
+    4. 主线程不断重复上面第三步骤
+* 主线程的执行过程就是一个 **tick**, 消息队列中存放的是一个个的任务 (task)。
+* task
+    * macro task (每个 macro task 结束后，都要清空所有的 micro task )
+    * micro task
+* 在浏览器环境中
+    * 常见的 macro task 有 setTimeout, MessageChannel, postMessage, setImmediate;
+    * 常见的 micro task 有 Mutation Observer 和 Promise.then
+
+## nextTick
+* nextTick 是把**要执行的任务推入到一个队列中**，在下一个 **tick** 同步执行
+* 数据改变后触发渲染 watcher 的 update， 但是 watchers 的 flush是在 nextTick后，所以重新渲染是异步的
+
+## Tip
+* Vue2.x 响应式数据中对于 对象新增，删除属性以及数组的下标访问修改，添加数据的变化是监测不到的
+    * 原因：对象是引用类型，所以只会监测到这个引用的值或者说是地址
+    * 解决：通过 Vue.set 以及数组的API解决；本质是内部手动做了依赖更新的派发 (childOb.dep.depend())和通知 (ob.dep.notify())
+    ```js
+    data() {
+        return {
+            msg: {
+                a: 'Hello'
+            },
+            items: [1, 2]
+        }
+    }
+    methods: {
+        change() {
+            //this.items[1] =3   //无效，监测不到
+
+            Vue.set(this.items, 1, 3)
+        }
+
+        add() {
+            //this.msg.b = 'Vue' //无效，监测不到
+            //this.items[2] = 4 //无效，监测不到
+
+            Vue.set(this.msg, 'b', 'Vue')
+            this.items.push(4)   //数组API
+        }
+    }
+    ```
+## $set, Vue.set 和 Object.assign 区别
+* $set 会直接更新视图, 而 Object.assign 则不会，需要建立一个空对象才能实时更新 ( ```Object.assign({},this.obj, {a: 55})```)
+* Vue.set 可以设置实例创建之后添加的新的属性, (在data里未声明的属性), 而 this.$set 只能设置实例创建后存在的属性。
+
+## 计算属性(compute) 和 监听属性
+* 计算属性适合用在模板渲染中；监听属性适用于观测某个值变化从而完成一段复杂的业务逻辑
+#### compute
+* 本质是通过 computed watcher 实现的
+* vue 2.57 以后 compute 每次都会触发 `getAndInvoke`函数作比较，数据是否有改变，有变化才会去触发重新渲染。概括来说，就是之间是计算少多次渲染，新版本是多次计算少渲染
+#### watch
+* 本质是通过 user watcher, 它还支持 deep, sync 和 immediate等配置
+
+## 组件更新
+* 观察数据变化，数据更新后能通知到观察者
+* 核心过程是 新旧 vnode diff，对新旧节点相同及不同的情况做不同处理
+    * 新旧节点不同更新流程：创建新节点 &rarr; 更新父占位符节点 &rarr; 删除旧节点
+    * 新旧节点相同更新流程: 获取它们的children, 根据不同情况做不同逻辑更新
+![alt](./img/componentUpdate.jpg)
+
+## Props
